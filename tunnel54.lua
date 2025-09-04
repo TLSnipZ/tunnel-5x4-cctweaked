@@ -59,7 +59,7 @@ local function refuelAll()
   turtle.select(1)
 end
 
--- ensureForward: mit Torch-Schutz
+-- ensureForward: mit Torch-Schutz (Fackeln NICHT abbauen)
 local function ensureForward()
   while turtle.detect() do
     local success, data = turtle.inspect()
@@ -172,14 +172,29 @@ local function placeTorchIfNeeded(step, wIdx)
   end
 end
 
+-- NEU: strukturierte Statusdaten zusätzlich zu den Chat-Logs
 local function status(step, wIdx, goingRight, length)
-  if not VERBOSE then return end
   local reserve = 5
   local needHome = distanceToLeft(wIdx, goingRight) + step + reserve
   local lvl = turtle.getFuelLevel()
-  say("[Step %d/%d | Col %d/%d] Fuel: %s | Heim min: %d | Slots frei: %d",
-    step, length, wIdx, WIDTH, tostring(lvl), needHome, slotsFree())
-  randomChat()
+
+  if VERBOSE then
+    say("[Step %d/%d | Col %d/%d] Fuel: %s | Heim min: %d | Slots frei: %d",
+      step, length, wIdx, WIDTH, tostring(lvl), needHome, slotsFree())
+    randomChat()
+  end
+
+  local data = {
+    type="status",
+    step=step, length=length,
+    col=wIdx, width=WIDTH,
+    dir=(goingRight and "right" or "left"),
+    fuel=lvl,
+    needHome=needHome,
+    slotsFree=slotsFree(),
+    ts=os.time()
+  }
+  if rednet.isOpen() then rednet.broadcast(data, "turtleStatus") end
 end
 
 local function maybeAutoReturn(step, wIdx, goingRight, length)
@@ -205,7 +220,7 @@ end
 
 -- === Main ===
 term.clear(); term.setCursorPos(1,1)
-rednet.open("right") -- anpassen je nach Modem-Seite
+rednet.open("right") -- Turtle-Modem rechts
 say("Tunnel-Mode ON 🐢💨 (mit Fackel-Service & Broadcast)")
 
 io.write("Wie lang soll der Tunnel sein (Bloecke)? ")
