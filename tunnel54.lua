@@ -1,56 +1,67 @@
--- tunnel54.lua
--- 5x4 Tunnel mit Auto-Return, Auto-Refuel, Auto-Torch-Placement, Resume,
--- Fun-Sprüchen, Fackel-Schutz + Rednet Broadcast an Monitor.
+-- tunnel54.lua (ASCII output)
+-- 5x4 Tunnel mit Auto-Return (Inventar + Fuel), Auto-Refuel, Auto-Fackeln (mittig unten, alle 6),
+-- Torch-Schutz (Fackeln nicht abbauen), Resume-Telemetrie, Fun-Quotes, Rednet Broadcast.
+-- Alle Ausgaben werden auf ASCII normalisiert (ae/oe/ue/ss).
 
-local WIDTH       = 5
-local HEIGHT      = 4
-local STATE_FILE  = "tunnel54.state"
-local VERBOSE     = true
-local TORCH_INTERVAL = 6
-local TORCH_NAME = "minecraft:torch"
+-- ===== Konfiguration =====
+local WIDTH          = 5
+local HEIGHT         = 4
+local STATE_FILE     = "tunnel54.state"
+local VERBOSE        = true
+local TORCH_INTERVAL = 6                 -- alle 6 Steps
+local TORCH_NAME     = "minecraft:torch" -- Item-Name fuer Fackeln
+local TURTLE_MODEM   = "right"           -- Seite des Wireless Modems an der Turtle
 
--- Fuel-Konstanten
+-- Fuel Konstanten (typische CC:Tweaked Defaults)
 local FUEL_COAL       = 80
 local FUEL_COAL_BLOCK = 720
 local FUEL_LAVA       = 1000
 
--- Fun Sprüche
+-- Fun Quotes (ASCII only)
 local randomQuotes = {
-  "Brudi, hier unten isses dunkler als in meiner Zukunft 😅",
-  "Stein um Stein... ich fühl mich wie Bob der Baumeister 🛠️",
-  "Warum grab ich eigentlich und nicht du? 🤔",
-  "Wenn hier Lava kommt, geb ich dir die Schuld 🔥",
-  "Slots platzen gleich wie mein Terminkalender 📅",
-  "Bro, ich schwitz mehr als du aufm Festival 😂",
-  "Mining-Turtle: 1, Kies: 0 💪",
-  "Tunnel-Business läuft stabil 📈",
-  "Hab Bock auf 'nen Döner nach Schichtende 🌯",
-  "Arbeiten ohne Musik? Stell mir wenigstens Spotify rein 🎶",
-  "Ohne Fackeln isses hier düster wie Montagsmorgens ☠️",
-  "Kohle tanken ist mein Energy-Drink 🔋",
-  "Tunnel gerade wie 'ne Tuning-Achse (hoffentlich) 🚗",
-  "Ich schwör, ich bau dir Minecraft-Autobahnen 🛣️",
-  "Ich setz dir mehr Fackeln als du Likes auf Insta hast 😂",
-  "Mission Mining Impossible 🎬",
+  "Brudi, hier unten ist es dunkler als in meiner Zukunft :D",
+  "Stein um Stein... fuehl mich wie Bob der Baumeister",
+  "Warum grabe ich eigentlich und nicht du?",
+  "Wenn hier Lava kommt, geb ich dir die Schuld",
+  "Slots platzen gleich wie mein Terminkalender",
+  "Bro, ich schwitz mehr als du aufm Festival",
+  "Mining-Turtle: 1, Kies: 0",
+  "Tunnel-Business laeuft stabil",
+  "Hab Bock auf nen Doener nach Schichtende",
+  "Arbeiten ohne Musik? Stell mir wenigstens Spotify rein",
+  "Ohne Fackeln ist es hier trueb wie Montagmorgen",
+  "Kohle tanken ist mein Energy-Drink",
+  "Tunnel gerade wie ne Tuning-Achse (hoffentlich)",
+  "Ich bau dir Minecraft-Autobahnen",
+  "Ich setz dir mehr Fackeln als du Likes hast",
+  "Mission Mining Impossible",
 }
 
--- === Output Helpers ===
+-- ===== Helpers: ASCII Normalisierung & Output =====
+local function deUmlaut(s)
+  s = s:gsub("Ä","Ae"):gsub("Ö","Oe"):gsub("Ü","Ue")
+  s = s:gsub("ä","ae"):gsub("ö","oe"):gsub("ü","ue"):gsub("ß","ss")
+  return s
+end
+
+local function say(fmt, ...)
+  local msg = string.format(fmt, ...)
+  msg = deUmlaut(msg)
+  print("🐢 "..msg)
+  if rednet.isOpen() then rednet.broadcast("🐢 "..msg, "turtleChat") end
+end
+
 local function randomChat()
   if not VERBOSE then return end
   if math.random(1, 10) == 1 then
     local msg = randomQuotes[math.random(1, #randomQuotes)]
+    msg = deUmlaut(msg)
     print("🐢 "..msg)
     if rednet.isOpen() then rednet.broadcast("🐢 "..msg, "turtleChat") end
   end
 end
 
-local function say(fmt, ...)
-  local msg = string.format(fmt, ...)
-  print("🐢 "..msg)
-  if rednet.isOpen() then rednet.broadcast("🐢 "..msg, "turtleChat") end
-end
-
--- === Utils ===
+-- ===== Bewegungs-/Interaktions-Utils =====
 local function refuelAll()
   for slot = 1, 16 do
     turtle.select(slot)
@@ -59,17 +70,19 @@ local function refuelAll()
   turtle.select(1)
 end
 
--- ensureForward: mit Torch-Schutz (Fackeln NICHT abbauen)
+-- Vorwaerts mit Torch-Schutz (Fackeln nicht abbauen)
 local function ensureForward()
   while turtle.detect() do
-    local success, data = turtle.inspect()
-    if success and data.name == TORCH_NAME then
+    local ok, data = turtle.inspect()
+    if ok and data and data.name == TORCH_NAME then
       if turtle.forward() then return end
     else
       turtle.dig(); sleep(0.05)
     end
   end
-  while not turtle.forward() do turtle.attack(); turtle.dig(); sleep(0.05) end
+  while not turtle.forward() do
+    turtle.attack(); turtle.dig(); sleep(0.05)
+  end
 end
 
 local function ensureUp()
@@ -82,7 +95,7 @@ local function ensureDown()
 end
 
 local function moveRight() turtle.turnRight(); ensureForward(); turtle.turnLeft() end
-local function moveLeft()  turtle.turnLeft(); ensureForward(); turtle.turnRight() end
+local function moveLeft()  turtle.turnLeft();  ensureForward(); turtle.turnRight() end
 
 local function dumpToChestBehind()
   turtle.turnLeft(); turtle.turnLeft()
@@ -104,12 +117,13 @@ end
 
 local function estimateTotalFuel(length) return length * 35 + length + 100 end
 
--- === State ===
+-- ===== State (Resume) =====
 local function saveState(step, wIdx, goingRight, length)
   local h = fs.open(STATE_FILE, "w")
   h.write(textutils.serialize({step=step, wIdx=wIdx, goingRight=goingRight, length=length}))
   h.close()
 end
+
 local function loadState()
   if not fs.exists(STATE_FILE) then return nil end
   local h = fs.open(STATE_FILE, "r")
@@ -117,9 +131,10 @@ local function loadState()
   h.close()
   return t
 end
+
 local function clearState() if fs.exists(STATE_FILE) then fs.delete(STATE_FILE) end end
 
--- === Fuel & Return ===
+-- ===== Fuel & Return =====
 local function distanceToLeft(wIdx, goingRight)
   if goingRight then return (wIdx - 1) else return (WIDTH - wIdx) end
 end
@@ -127,6 +142,7 @@ end
 local function refuelFromChestFront()
   for i = 1, 8 do turtle.suck(64) end
   refuelAll()
+  -- Reste zurueck
   for slot = 1, 16 do
     turtle.select(slot)
     if turtle.getItemCount(slot) > 0 then turtle.drop() end
@@ -134,23 +150,31 @@ local function refuelFromChestFront()
   turtle.select(1)
 end
 
-local function takeTorchesFromChest() for i = 1, 8 do turtle.suck(64) end end
+local function takeTorchesFromChest()
+  for i = 1, 8 do turtle.suck(64) end
+end
 
 local function goHomeUnloadAndReturn(step, wIdx, goingRight)
+  -- zur linken Kante der aktuellen Scheibe
   local leftMoves = distanceToLeft(wIdx, goingRight)
   for i = 1, leftMoves do moveLeft() end
+  -- 180° und step Schritte "vor" (real zurueck) zum Start
   turtle.turnLeft(); turtle.turnLeft()
   for i = 1, step do ensureForward() end
-  say("Back @ Home – loot droppen 🚛")
+
+  say("Back @ Home - Loot droppen")
   for slot = 1, 16 do turtle.select(slot); turtle.drop() end
   turtle.select(1)
-  say("Check Sprit & Fackeln in der Kiste 🛠️🔥")
+
+  say("Check Sprit & Fackeln in der Kiste")
   refuelFromChestFront()
   takeTorchesFromChest()
+
+  -- zurueck zur Arbeitsstelle
   turtle.turnLeft(); turtle.turnLeft()
   for i = 1, step do ensureForward() end
   for i = 1, (wIdx - 1) do moveRight() end
-  say("Jo, zurück am Arbeitsplatz ⛏️")
+  say("Zurueck am Arbeitsplatz")
 end
 
 local function clearColumn(height)
@@ -165,14 +189,14 @@ local function placeTorchIfNeeded(step, wIdx)
       if detail and detail.name == TORCH_NAME then
         turtle.select(slot)
         turtle.placeDown()
-        say("Fackel gesetzt 🔦 (Step %d)", step)
+        say("Fackel gesetzt (Step %d)", step)
         return
       end
     end
   end
 end
 
--- NEU: strukturierte Statusdaten zusätzlich zu den Chat-Logs
+-- Strukturierter Status für GUI + Chat-Status
 local function status(step, wIdx, goingRight, length)
   local reserve = 5
   local needHome = distanceToLeft(wIdx, goingRight) + step + reserve
@@ -199,7 +223,7 @@ end
 
 local function maybeAutoReturn(step, wIdx, goingRight, length)
   if invFull() then
-    say("Inventar voll, ab nach Hause 👜➡️")
+    say("Inventar voll -> Heimweg")
     saveState(step, wIdx, goingRight, length)
     goHomeUnloadAndReturn(step, wIdx, goingRight)
     clearState()
@@ -211,24 +235,24 @@ local function ensureFuelOrReturn(step, wIdx, goingRight, length)
   local needHome = distanceToLeft(wIdx, goingRight) + step + reserve
   local lvl = turtle.getFuelLevel()
   if lvl ~= "unlimited" and lvl < needHome then
-    say("Fuel low – retreat! 🛢️")
+    say("Fuel low -> Retreat")
     saveState(step, wIdx, goingRight, length)
     goHomeUnloadAndReturn(step, wIdx, goingRight)
     clearState()
   end
 end
 
--- === Main ===
+-- ===== Main =====
 term.clear(); term.setCursorPos(1,1)
-rednet.open("right") -- Turtle-Modem rechts
-say("Tunnel-Mode ON 🐢💨 (mit Fackel-Service & Broadcast)")
+rednet.open(TURTLE_MODEM)  -- Modem-Seite
+say("Tunnel-Mode ON (Fackeln, Auto-Return, Broadcast)")
 
 io.write("Wie lang soll der Tunnel sein (Bloecke)? ")
 local LENGTH = tonumber(read() or "0") or 0
-if LENGTH <= 0 then say("Ey, gib mal ne gescheite Zahl 🙃"); return end
+if LENGTH <= 0 then say("Ungueltige Laenge"); return end
 
 local est = estimateTotalFuel(LENGTH)
-say("Für %d Blöcke brauch ich grob %d Fuel.", LENGTH, est)
+say("Empfehlung Fuel grob: %d", est)
 
 refuelAll()
 
@@ -252,8 +276,10 @@ for step = 1, LENGTH do
   goingRight = not goingRight
 end
 
+-- Am Ende ggf. von rechts nach links rueber
 if goingRight == false then for i = 1, WIDTH - 1 do moveLeft() end end
+-- Heim + Entladen
 turtle.turnLeft(); turtle.turnLeft()
 for i = 1, LENGTH do ensureForward() end
 dumpToChestBehind()
-say("Tunnel abgeschlossen! Loot & Licht ✅")
+say("Tunnel abgeschlossen - Loot & Licht ready")
