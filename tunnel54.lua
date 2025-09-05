@@ -19,7 +19,7 @@ local function de(s)
   return s
 end
 
--- ====== Modems öffnen (Ender inkl.) ======
+-- ====== Modems oeffnen (Ender inkl.) ======
 local function openAnyModems()
   for _,side in ipairs(rs.getSides()) do
     if peripheral.getType(side) == "modem" then pcall(rednet.open, side) end
@@ -33,6 +33,9 @@ local function say(fmt, ...)
   print("🐢 "..msg)
   if rednet.isOpen() then rednet.broadcast("🐢 "..msg, "turtleChat") end
 end
+
+function slotsFree() local f=0; for s=1,16 do if turtle.getItemCount(s)==0 then f=f+1 end end; return f end
+
 local function sendLog(step, wIdx, goingRight, length)
   local lvl = turtle.getFuelLevel()
   local log = string.format("[%s] step %d/%d col %d/%d dir %s fuel %s free %d",
@@ -63,24 +66,44 @@ local function refuelAll()
   for s=1,16 do turtle.select(s); if turtle.refuel(0) then turtle.refuel(64) end end
   turtle.select(1)
 end
-function slotsFree() local f=0; for s=1,16 do if turtle.getItemCount(s)==0 then f=f+1 end end; return f end
 local function invFull() for s=1,16 do if turtle.getItemCount(s)==0 then return false end end return true end
+
 local function ensureForward()
   while turtle.detect() do
     local ok, data = turtle.inspect()
-    if ok and data and data.name == TORCH_NAME then break else turtle.dig(); sleep(0.05) end
+    if ok and data and data.name == TORCH_NAME then
+      break
+    else
+      turtle.dig(); sleep(0.05)
+    end
   end
   while not turtle.forward() do turtle.attack(); turtle.dig(); sleep(0.05) end
 end
-local function ensureUp() while turtle.detectUp() do turtle.digUp(); sleep(0.05) end; while not turtle.up() do turtle.attackUp(); turtle.digUp(); sleep(0.05) end end
-local function ensureDown() while not turtle.down() do turtle.attackDown(); turtle.digDown(); sleep(0.05) end end
+
+local function ensureUp()
+  while turtle.detectUp() do turtle.digUp(); sleep(0.05) end
+  while not turtle.up() do turtle.attackUp(); turtle.digUp(); sleep(0.05) end
+end
+
+local function ensureDown()
+  while not turtle.down() do turtle.attackDown(); turtle.digDown(); sleep(0.05) end
+end
+
 local function moveRight() turtle.turnRight(); ensureForward(); turtle.turnLeft() end
 local function moveLeft()  turtle.turnLeft();  ensureForward(); turtle.turnRight() end
+
+-- >>>>> FIX: Drehen 180° und DANN droppen (RUECKEN zur Kiste), NICHT zurueckdrehen
 local function dumpToChestBehind()
-  turtle.turnLeft(); turtle.turnLeft()
-  for s=1,16 do turtle.select(s); turtle.drop() end
-  turtle.select(1); turtle.turnLeft(); turtle.turnLeft()
+  turtle.turnLeft(); turtle.turnLeft()        -- 180° drehen -> Ruecken zur Kiste
+  for s=1,16 do
+    turtle.select(s)
+    turtle.drop()                             -- dropt nach vorne in die Kiste (hinter der Turtle)
+  end
+  turtle.select(1)
+  -- KEIN weiteres Drehen hier! -> Orientierung = Start-Orientierung (Ruecken zur Kiste)
 end
+-- <<<<< FIX Ende
+
 local function estimateTotalFuel(len) return len*35 + len + 100 end
 
 -- ====== Resume-State ======
@@ -144,12 +167,12 @@ local function ensureFuelOrReturn(step, wIdx, goingRight, length)
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
     say("[%s] @Home - droppen & refuel", CFG.name)
-    dumpToChestBehind()
+    dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
     for i=1,8 do turtle.suck(64) end
     refuelAll()
     for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.drop() end end
     turtle.select(1)
-    turtle.turnLeft(); turtle.turnLeft()
+    turtle.turnLeft(); turtle.turnLeft()      -- wieder Richtung Tunnel
     for i=1, step do ensureForward() end
     for i=1, (wIdx-1) do moveRight() end
     clearState()
@@ -164,12 +187,12 @@ local function maybeAutoReturn(step, wIdx, goingRight, length)
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
     say("[%s] @Home - droppen", CFG.name)
-    dumpToChestBehind()
+    dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
     for i=1,8 do turtle.suck(64) end
     refuelAll()
     for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.drop() end end
     turtle.select(1)
-    turtle.turnLeft(); turtle.turnLeft()
+    turtle.turnLeft(); turtle.turnLeft()      -- wieder Richtung Tunnel
     for i=1, step do ensureForward() end
     for i=1, (wIdx-1) do moveRight() end
     clearState()
@@ -249,7 +272,7 @@ local function mineFrom(startStep, startWIdx, startDirRight, length, resumeMode)
   if goingRight == false then for i=1, WIDTH-1 do moveLeft() end end
   turtle.turnLeft(); turtle.turnLeft()
   for i=1, (resumeMode and (step-1) or length) do ensureForward() end
-  dumpToChestBehind()
+  dumpToChestBehind()                           -- finaler Dump: Ruecken zur Kiste
   if ABORT then say("[%s] Abgebrochen & entladen.", CFG.name) else say("[%s] Fertig & entladen.", CFG.name) end
 end
 
