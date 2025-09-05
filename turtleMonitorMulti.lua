@@ -1,7 +1,7 @@
--- turtleMonitorMulti.lua (Compact v2)
+-- turtleMonitorMulti.lua (Compact v2.1) – Fix: setCursorPos braucht x,y im Header
 -- Optimiert fuer sehr kleine Monitore (z.B. 5x3 Bloecke).
--- Features: Multi-Turtle Tabs, Live Fuel/Slots/Steps, Buttons (Pause/Resume/Stop/Verbose),
--- breitere Klickzonen, Chat-Box je Turtle unten im Tab, Ender-Modem Support.
+-- Multi-Turtle Tabs, Live Fuel/Slots/Steps, Buttons (Pause/Resume/Stop/Verbose),
+-- breite Klickzonen, Chat-Box je Turtle unten im Tab, Ender-Modem Support.
 
 -- ====== Auto-Scale Monitor (kompakt) ======
 local function attachMonitorAuto(minCols, minRows, fallbackScale)
@@ -61,7 +61,8 @@ end
 local function header()
   fill(1,1,W,1,colors.gray); clr(colors.gray, colors.black)
   local ttl="Turtles"
-  out.setCursorPos(math.max(1, math.floor((W-#ttl)/2))); out.write(ttl)
+  out.setCursorPos(math.max(1, math.floor((W-#ttl)/2)), 1)  -- << FIX: y=1
+  out.write(ttl)
 end
 
 local function tabs()
@@ -103,28 +104,24 @@ local function viewTurtle(name)
   end
 
   -- Layout kompakt:
-  -- Zeile 3: Name & Step
   writeAt(2,3, (name or "?"):sub(1, W-4), colors.white)
-  -- Zeile 4: Fuel-Bar
   if H>=5 then
     local est=(t.length or 0)*35 + 150
     local lvl=(t.fuel=="unlimited") and est or tonumber(t.fuel) or 0
     writeAt(2,4,"F:", colors.white)
     bar(5,4, W-6, (est>0 and lvl/est or 0), colors.green, colors.yellow)
   end
-  -- Zeile 5: Slots-Bar
   if H>=6 then
     local free=t.slotsFree or 16; local used=16-free
     writeAt(2,5,"S:", colors.white)
     bar(5,5, W-6, used/16, colors.lime, colors.orange)
   end
-  -- Zeile 6: Progress
   if H>=7 then
     writeAt(2,6,"P:", colors.white)
     bar(5,6, W-6, ((t.step or 0)/math.max(1,(t.length or 1))), colors.blue, colors.yellow)
   end
 
-  -- Chat-Box: letzte Zeile (oder zwei), je nach Hoehe
+  -- Chat-Box unten (1–2 Zeilen)
   local chatLines = math.max(1, (H>=9 and 2) or 1)
   local yStart = H - chatLines
   for i=0,chatLines-1 do
@@ -150,11 +147,8 @@ end
 local function sendCmd(name, cmd)
   if not name then return end
   local id = rednet.lookup("turtleCtl", name)
-  if id then
-    rednet.send(id, cmd, "turtleCtl")
-  else
-    rednet.broadcast({target=name, cmd=cmd}, "turtleCtl")
-  end
+  if id then rednet.send(id, cmd, "turtleCtl")
+  else rednet.broadcast({target=name, cmd=cmd}, "turtleCtl") end
 end
 
 -- ====== Event Loop ======
@@ -191,7 +185,6 @@ while true do
         turtles[who].chat = c
         draw()
       else
-        -- Unbekannt -> lege in aktiven Tab ab
         local name = order[activeIdx]
         if name then
           turtles[name] = turtles[name] or {chat={}}
@@ -221,15 +214,10 @@ while true do
 
   elseif ev[1]=="monitor_touch" then
     local mx,my = ev[3], ev[4]
-    -- Tabs (Zeile 2): in Segmente clustern
     if my==2 and #order>0 then
       local segW = math.max(3, math.floor(W / math.min(#order, 6)))
       local idx = math.floor((mx-1)/segW) + 1
-      if idx>=1 and idx<=math.min(#order,6) then
-        activeIdx = idx
-        draw()
-      end
-    -- Buttons (vorletzte Zeile): 4 breite Zonen
+      if idx>=1 and idx<=math.min(#order,6) then activeIdx = idx; draw() end
     elseif my==H-1 and #order>0 then
       local slot = math.max(1, math.floor(W/4))
       local name = order[activeIdx]
@@ -237,8 +225,7 @@ while true do
       if idx==1 then sendCmd(name,"pause")
       elseif idx==2 then sendCmd(name,"resume")
       elseif idx==3 then sendCmd(name,"stop")
-      elseif idx==4 then sendCmd(name,"verbose")
-      end
+      elseif idx==4 then sendCmd(name,"verbose") end
       draw()
     end
 
