@@ -12,7 +12,7 @@ local STATE_FILE = "tunnel54.state"
 local CFG_FILE   = "tunnel54.cfg"
 local VERBOSE = true  -- Funny/Chat default an
 
--- CFG MUSS FRUEH DA SEIN, sonst nil-Fehler bei say()/sendLog()
+-- CFG muss VOR say()/sendLog() existieren
 local CFG = {}
 
 -- ====== ASCII helper ======
@@ -60,15 +60,11 @@ end
 -- ====== Config (Name speichern) ======
 local function loadCfg()
   if fs.exists(CFG_FILE) then
-    local h=fs.open(CFG_FILE,"r")
-    CFG = textutils.unserialize(h.readAll()) or {}
-    h.close()
+    local h=fs.open(CFG_FILE,"r"); CFG = textutils.unserialize(h.readAll()) or {}; h.close()
   end
 end
 local function saveCfg()
-  local h=fs.open(CFG_FILE,"w")
-  h.write(textutils.serialize(CFG))
-  h.close()
+  local h=fs.open(CFG_FILE,"w"); h.write(textutils.serialize(CFG)); h.close()
 end
 
 loadCfg()
@@ -114,17 +110,69 @@ end
 local function moveRight() turtle.turnRight(); ensureForward(); turtle.turnLeft() end
 local function moveLeft()  turtle.turnLeft();  ensureForward(); turtle.turnRight() end
 
--- >>>>> FIX: 180° drehen und DANN droppen (Ruecken zur Kiste), NICHT zurueckdrehen
-local function dumpToChestBehind()
-  turtle.turnLeft(); turtle.turnLeft()        -- 180° -> Ruecken zeigt zur Kiste
+-- ====== Smarter Dump (front/back/up/down) ======
+local function isContainerName(name)
+  if not name then return false end
+  name = tostring(name)
+  return name:find("chest") or name:find("barrel")
+      or name:find("shulker_box") or name:find("drawer")
+      or name:find("crate")
+end
+
+local function dropAllForward()
   for s=1,16 do
     turtle.select(s)
-    turtle.drop()                             -- dropt in die Kiste hinter der Turtle
+    if turtle.getItemCount(s) > 0 then turtle.drop() end
   end
   turtle.select(1)
-  -- KEIN weiteres Drehen: bleibt wie Start-Orientierung (Ruecken zur Kiste)
 end
--- <<<<< FIX Ende
+
+-- Neuer smarter Dump:
+-- - Wenn VORNE Kiste: vorne droppen, DANN 180° drehen (parkt Ruecken zur Kiste)
+-- - Wenn HINTEN Kiste: 180° drehen, vorne droppen, (bleibt Ruecken zur Kiste)
+-- - Wenn OBEN/UNTEN Kiste: dorthin droppen, dann 180° (parkt Ruecken zur Kiste)
+-- - Sonst: vorne droppen + 180° (Failsafe)
+local function dumpSmart()
+  -- FRONT?
+  local okF, dataF = turtle.inspect()
+  if okF and isContainerName(dataF and dataF.name) then
+    dropAllForward()
+    turtle.turnLeft(); turtle.turnLeft()
+    return
+  end
+
+  -- BACK?
+  turtle.turnLeft(); turtle.turnLeft()
+  local okB, dataB = turtle.inspect()
+  if okB and isContainerName(dataB and dataB.name) then
+    dropAllForward()         -- wir schauen jetzt auf die Back-Kiste
+    return                   -- Ruecken bleibt zur Kiste -> perfekt geparkt
+  end
+  -- nicht hinten? zur Ausgangsfront zurück
+  turtle.turnLeft(); turtle.turnLeft()
+
+  -- DOWN?
+  local okD, dataD = turtle.inspectDown()
+  if okD and isContainerName(dataD and dataD.name) then
+    for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.dropDown() end end
+    turtle.select(1)
+    turtle.turnLeft(); turtle.turnLeft()
+    return
+  end
+
+  -- UP?
+  local okU, dataU = turtle.inspectUp()
+  if okU and isContainerName(dataU and dataU.name) then
+    for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.dropUp() end end
+    turtle.select(1)
+    turtle.turnLeft(); turtle.turnLeft()
+    return
+  end
+
+  -- Fallback: vorne droppen + parken
+  dropAllForward()
+  turtle.turnLeft(); turtle.turnLeft()
+end
 
 local function estimateTotalFuel(len) return len*35 + len + 100 end
 
@@ -172,9 +220,7 @@ local function placeTorchIfNeeded(step, wIdx)
     for s=1,16 do
       local d=turtle.getItemDetail(s)
       if d and d.name==TORCH_NAME then
-        turtle.select(s); turtle.placeDown()
-        say("Fackel gesetzt @ step %d", step)
-        turtle.select(1); return
+        turtle.select(s); turtle.placeDown(); say("Fackel gesetzt @ step %d", step); turtle.select(1); return
       end
     end
   end
@@ -192,7 +238,7 @@ local function ensureFuelOrReturn(step, wIdx, goingRight, length)
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
     say("@Home - droppen & refuel")
-    dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
+    dumpSmart()                               -- nutzt Front/Back/Up/Down
     for i=1,8 do turtle.suck(64) end
     refuelAll()
     for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.drop() end end
@@ -212,7 +258,7 @@ local function maybeAutoReturn(step, wIdx, goingRight, length)
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
     say("@Home - droppen")
-    dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
+    dumpSmart()                               -- nutzt Front/Back/Up/Down
     for i=1,8 do turtle.suck(64) end
     refuelAll()
     for s=1,16 do turtle.select(s); if turtle.getItemCount(s)>0 then turtle.drop() end end
@@ -302,7 +348,7 @@ local function mineFrom(startStep, startWIdx, startDirRight, length, resumeMode)
   if goingRight == false then for i=1, WIDTH-1 do moveLeft() end end
   turtle.turnLeft(); turtle.turnLeft()
   for i=1, (resumeMode and (step-1) or length) do ensureForward() end
-  dumpToChestBehind()                           -- finaler Dump: Ruecken zur Kiste
+  dumpSmart()                                   -- finaler Dump smart + parken Ruecken zur Kiste
   if ABORT then say("Abgebrochen & entladen.") else say("Fertig & entladen.") end
 end
 
