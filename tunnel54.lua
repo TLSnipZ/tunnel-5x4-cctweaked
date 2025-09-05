@@ -12,6 +12,9 @@ local STATE_FILE = "tunnel54.state"
 local CFG_FILE   = "tunnel54.cfg"
 local VERBOSE = true  -- Funny/Chat default an
 
+-- CFG MUSS FRUEH DA SEIN, sonst nil-Fehler bei say()/sendLog()
+local CFG = {}
+
 -- ====== ASCII helper ======
 local function de(s)
   s = s:gsub("Ä","Ae"):gsub("Ö","Oe"):gsub("Ü","Ue")
@@ -27,46 +30,65 @@ local function openAnyModems()
 end
 openAnyModems()
 
+-- ====== Inventar-Utils ======
+local function slotsFree()
+  local f=0
+  for s=1,16 do if turtle.getItemCount(s)==0 then f=f+1 end end
+  return f
+end
+local function invFull()
+  for s=1,16 do if turtle.getItemCount(s)==0 then return false end end
+  return true
+end
+
 -- ====== Chat/Funny + Log ======
 local function say(fmt, ...)
-  local msg = de(string.format(fmt, ...))
+  local name = CFG.name or "turtle"
+  local msg = de(string.format("[%s] ", name) .. string.format(fmt, ...))
   print("🐢 "..msg)
   if rednet.isOpen() then rednet.broadcast("🐢 "..msg, "turtleChat") end
 end
 
-function slotsFree() local f=0; for s=1,16 do if turtle.getItemCount(s)==0 then f=f+1 end end; return f end
-
 local function sendLog(step, wIdx, goingRight, length)
   local lvl = turtle.getFuelLevel()
   local log = string.format("[%s] step %d/%d col %d/%d dir %s fuel %s free %d",
-    CFG.name, step, length, wIdx, WIDTH, (goingRight and "right" or "left"),
-    tostring(lvl), slotsFree())
+    (CFG.name or "turtle"), step, length, wIdx, WIDTH,
+    (goingRight and "right" or "left"), tostring(lvl), slotsFree())
   if rednet.isOpen() then rednet.broadcast(log, "turtleLog") end
 end
 
 -- ====== Config (Name speichern) ======
-local CFG = {}
 local function loadCfg()
   if fs.exists(CFG_FILE) then
-    local h=fs.open(CFG_FILE,"r"); CFG = textutils.unserialize(h.readAll()) or {}; h.close()
+    local h=fs.open(CFG_FILE,"r")
+    CFG = textutils.unserialize(h.readAll()) or {}
+    h.close()
   end
 end
-local function saveCfg() local h=fs.open(CFG_FILE,"w"); h.write(textutils.serialize(CFG)); h.close() end
+local function saveCfg()
+  local h=fs.open(CFG_FILE,"w")
+  h.write(textutils.serialize(CFG))
+  h.close()
+end
+
 loadCfg()
-if not CFG.name then
+if not CFG.name or CFG.name == "" then
   term.setCursorPos(1,1); term.clear()
   print("Turtle-Name eingeben (z.B. alpha/beta):")
   CFG.name = read()
+  if not CFG.name or CFG.name == "" then CFG.name = "turtle" end
   saveCfg()
 end
 if rednet.isOpen() then pcall(rednet.host, "turtleCtl", CFG.name) end
 
 -- ====== Move/Mine ======
 local function refuelAll()
-  for s=1,16 do turtle.select(s); if turtle.refuel(0) then turtle.refuel(64) end end
+  for s=1,16 do
+    turtle.select(s)
+    if turtle.refuel(0) then turtle.refuel(64) end
+  end
   turtle.select(1)
 end
-local function invFull() for s=1,16 do if turtle.getItemCount(s)==0 then return false end end return true end
 
 local function ensureForward()
   while turtle.detect() do
@@ -92,15 +114,15 @@ end
 local function moveRight() turtle.turnRight(); ensureForward(); turtle.turnLeft() end
 local function moveLeft()  turtle.turnLeft();  ensureForward(); turtle.turnRight() end
 
--- >>>>> FIX: Drehen 180° und DANN droppen (RUECKEN zur Kiste), NICHT zurueckdrehen
+-- >>>>> FIX: 180° drehen und DANN droppen (Ruecken zur Kiste), NICHT zurueckdrehen
 local function dumpToChestBehind()
-  turtle.turnLeft(); turtle.turnLeft()        -- 180° drehen -> Ruecken zur Kiste
+  turtle.turnLeft(); turtle.turnLeft()        -- 180° -> Ruecken zeigt zur Kiste
   for s=1,16 do
     turtle.select(s)
-    turtle.drop()                             -- dropt nach vorne in die Kiste (hinter der Turtle)
+    turtle.drop()                             -- dropt in die Kiste hinter der Turtle
   end
   turtle.select(1)
-  -- KEIN weiteres Drehen hier! -> Orientierung = Start-Orientierung (Ruecken zur Kiste)
+  -- KEIN weiteres Drehen: bleibt wie Start-Orientierung (Ruecken zur Kiste)
 end
 -- <<<<< FIX Ende
 
@@ -122,18 +144,19 @@ local function clearState() if fs.exists(STATE_FILE) then fs.delete(STATE_FILE) 
 local function distanceToLeft(wIdx, goingRight)
   if goingRight then return (wIdx-1) else return (WIDTH - wIdx) end
 end
+
 local function status(step, wIdx, goingRight, length)
   local reserve=5
   local needHome = distanceToLeft(wIdx,goingRight) + step + reserve
   local lvl = turtle.getFuelLevel()
 
   if VERBOSE then
-    say("[%s] Step %d/%d | Col %d/%d | Fuel %s | Heim %d | Frei %d",
-      CFG.name, step,length,wIdx,WIDTH,tostring(lvl),needHome,slotsFree())
+    say("Step %d/%d | Col %d/%d | Fuel %s | Heim %d | Frei %d",
+      step,length,wIdx,WIDTH,tostring(lvl),needHome,slotsFree())
   end
 
   local data = {
-    type="status", name=CFG.name,
+    type="status", name=(CFG.name or "turtle"),
     step=step, length=length, col=wIdx, width=WIDTH,
     dir=(goingRight and "right" or "left"),
     fuel=lvl, needHome=needHome, slotsFree=slotsFree(), ts=os.time()
@@ -149,7 +172,9 @@ local function placeTorchIfNeeded(step, wIdx)
     for s=1,16 do
       local d=turtle.getItemDetail(s)
       if d and d.name==TORCH_NAME then
-        turtle.select(s); turtle.placeDown(); say("[%s] Fackel gesetzt @ step %d", CFG.name, step); turtle.select(1); return
+        turtle.select(s); turtle.placeDown()
+        say("Fackel gesetzt @ step %d", step)
+        turtle.select(1); return
       end
     end
   end
@@ -161,12 +186,12 @@ local function ensureFuelOrReturn(step, wIdx, goingRight, length)
   local needHome = distanceToLeft(wIdx,goingRight) + step + reserve
   local lvl = turtle.getFuelLevel()
   if lvl~="unlimited" and lvl < needHome then
-    say("[%s] Fuel low -> Heimweg", CFG.name)
+    say("Fuel low -> Heimweg")
     saveState(step,wIdx,goingRight,length)
     for i=1, distanceToLeft(wIdx,goingRight) do moveLeft() end
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
-    say("[%s] @Home - droppen & refuel", CFG.name)
+    say("@Home - droppen & refuel")
     dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
     for i=1,8 do turtle.suck(64) end
     refuelAll()
@@ -181,12 +206,12 @@ end
 
 local function maybeAutoReturn(step, wIdx, goingRight, length)
   if invFull() then
-    say("[%s] Inventar voll -> Heimweg", CFG.name)
+    say("Inventar voll -> Heimweg")
     saveState(step,wIdx,goingRight,length)
     for i=1, distanceToLeft(wIdx,goingRight) do moveLeft() end
     turtle.turnLeft(); turtle.turnLeft()
     for i=1, step do ensureForward() end
-    say("[%s] @Home - droppen", CFG.name)
+    say("@Home - droppen")
     dumpToChestBehind()                       -- steht danach mit Ruecken zur Kiste
     for i=1,8 do turtle.suck(64) end
     refuelAll()
@@ -205,20 +230,25 @@ local function clearColumn()
   for i=1, HEIGHT-1 do ensureDown() end
 end
 
+-- ====== Remote Control ======
 local PAUSED, ABORT = false, false
 local function controlListener()
   while true do
     local id, msg, proto = rednet.receive("turtleCtl")
     local cmd = nil
-    if type(msg)=="string" then cmd = msg:lower()
+    if type(msg)=="string" then
+      cmd = msg:lower()
     elseif type(msg)=="table" then
       if msg.target and msg.target ~= CFG.name then
-      else cmd = (msg.cmd or ""):lower() end
+        cmd = nil
+      else
+        cmd = (msg.cmd or ""):lower()
+      end
     end
-    if cmd=="pause"   then PAUSED=true;  say("[%s] Pause", CFG.name) end
-    if cmd=="resume"  then PAUSED=false; say("[%s] Weiter", CFG.name) end
-    if cmd=="stop"    then ABORT=true;   say("[%s] Stop angefordert", CFG.name) end
-    if cmd=="verbose" then VERBOSE=not VERBOSE; say("[%s] Verbose=%s", CFG.name, tostring(VERBOSE)) end
+    if cmd=="pause"   then PAUSED=true;  say("Pause") end
+    if cmd=="resume"  then PAUSED=false; say("Weiter") end
+    if cmd=="stop"    then ABORT=true;   say("Stop angefordert") end
+    if cmd=="verbose" then VERBOSE=not VERBOSE; say("Verbose=%s", tostring(VERBOSE)) end
   end
 end
 local function pausePoint() while PAUSED and not ABORT do sleep(0.2) end end
@@ -273,23 +303,23 @@ local function mineFrom(startStep, startWIdx, startDirRight, length, resumeMode)
   turtle.turnLeft(); turtle.turnLeft()
   for i=1, (resumeMode and (step-1) or length) do ensureForward() end
   dumpToChestBehind()                           -- finaler Dump: Ruecken zur Kiste
-  if ABORT then say("[%s] Abgebrochen & entladen.", CFG.name) else say("[%s] Fertig & entladen.", CFG.name) end
+  if ABORT then say("Abgebrochen & entladen.") else say("Fertig & entladen.") end
 end
 
 local function mineMain()
   term.clear(); term.setCursorPos(1,1)
-  say("[%s] Tunnel-Mode ON (Ender, Status, Chat+Log)", CFG.name)
+  say("Tunnel-Mode ON (Ender, Status, Chat+Log)")
 
   io.write(de("Wie lang soll der Tunnel sein (Bloecke)? ") )
   local LENGTH = tonumber(read() or "0") or 0
-  if LENGTH<=0 then say("[%s] Ungueltige Laenge", CFG.name); return end
+  if LENGTH<=0 then say("Ungueltige Laenge"); return end
 
-  say("[%s] Fuel-Empfehlung ca. %d", CFG.name, estimateTotalFuel(LENGTH))
+  say("Fuel-Empfehlung ca. %d", estimateTotalFuel(LENGTH))
   refuelAll()
 
   if rednet.isOpen() then
     rednet.broadcast({
-      type="status", name=CFG.name, step=0, length=LENGTH, col=1, width=WIDTH,
+      type="status", name=(CFG.name or "turtle"), step=0, length=LENGTH, col=1, width=WIDTH,
       dir="right", fuel=turtle.getFuelLevel(), needHome=0, slotsFree=slotsFree(), ts=os.time()
     },"turtleStatus")
     sendLog(0,1,true,LENGTH)
